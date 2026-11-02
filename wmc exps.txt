@@ -1,0 +1,1697 @@
+Exp 2: Simulation of Basic Communication Channel.
+
+import numpy as np # for arrays, mathematical operations and random numb
+import matplotlib.pyplot as plt # for graphs
+from scipy.signal import hilbert
+from scipy.special import erfc
+rng = np.random.default_rng(42)   # Create a NumPy random number generat
+# -----------------------------------------------------------------
+# Analog- setup
+# -----------------------------------------------------------------
+fs = 1000                        # sampling frequency (samples/sec) re
+t = np.linspace(0, 1, fs)        # creates the x axis by returning a a
+fc = 50                          # carrier frequency (Hz) high frequer
+fm = 5                           # message frequency (Hz)
+message = np.sin(2 * np.pi * fm * t) # Creates a sine wave of 5 hz frequ
+
+
+def am_transmit(msg):
+    carrier = np.sin(2 * np.pi * fc * t) # creates the carrier wave
+    return (1 + msg) * carrier # combinig the carrier with msg and add 1
+
+def am_receive(rx):
+    envelope = np.abs(hilbert(rx)) # absolute value to keep it positive.
+    return envelope - np.mean(envelope) # -np.mean(envelope) is used to
+
+
+print("=" * 60)
+print("EXPERIMENT 1: Noise sweep on the analog AM chain")
+print("=" * 60)
+
+tx_signal = am_transmit(message) # to create the transmission signal
+signal_power = np.mean(tx_signal ** 2) # power= 1/N * sumation((sample values)**2)
+
+noise_levels_demo = [0.05, 0.3, 1.0]
+
+fig, axes = plt.subplots(len(noise_levels_demo), 2, figsize=(12, 8), sharex=True) # creates 3
+
+for row, sigma in enumerate(noise_levels_demo): # each noise level do,
+    noise = rng.normal(0, sigma, len(t))# Generate an array of len(t) random numbers that foll
+    rx_signal = tx_signal + noise # add noise to the transmitted signal so as to simulate the
+    recovered = am_receive(rx_signal) # signal at the reciever end.
+
+    # noise_power here is the std dev sigma; actual noise power = sigma^2
+
+    snr_db = 10 * np.log10(signal_power / sigma**2) #calculate signal to noise ratio. SNR = Ps
+    print(f"  noise std = {sigma:>5.2f}  ->  SNR = {snr_db:6.2f} dB") # print the noise std an
+
+    #printing the graphs
+    axes[row, 0].plot(t, rx_signal, lw=0.6, color="tab:gray") # recieved signal
+    axes[row, 0].set_title(f"Received signal, noise std = {sigma} (SNR = {snr_db:.1f} dB)")
+    axes[row, 1].plot(t, message, "k--", lw=1, label="original") # actual message
+    axes[row, 1].plot(t, recovered, color="tab:blue", lw=1, label="recovered")
+    axes[row, 1].set_title(f"Recovered message, noise std = {sigma}")
+    axes[row, 1].legend(loc="upper right", fontsize=8)
+
+axes[-1, 0].set_xlabel("Time (s)")
+axes[-1, 1].set_xlabel("Time (s)")
+fig.suptitle("Experiment 1a: Recovered-signal degradation as noise increases")
+fig.tight_layout()
+fig.savefig("exp1_noise_sweep_waveforms.png", dpi=150)
+
+
+# (b) SNR vs noise level - fine sweep
+# (b) Measured SNR vs noise level over a fine sweep
+
+noise_sweep = np.linspace(0.02, 1.2, 30) # start at 0.02 end at 1.2 and divide to 
+snr_sweep_db = 10 * np.log10(signal_power / noise_sweep**2) # to get the noise pow
+# snr sweep db will store snr value for every noise value
+
+# also measure recovered-message quality (correlation with original) at each level
+quality = [] # it is an empty array which will later store recovery quality.
+for sigma in noise_sweep: # for each value in noise sweep do
+    rx = tx_signal + rng.normal(0, sigma, len(t)) # add noise to the transmitted s
+    rec = am_receive(rx) # get the recieved signal. the receive detects envelope, 
+    quality.append(np.corrcoef(message, rec)[0, 1]) # find the coreelation betweer
+
+# increasing the noise standard deviation reduces the Signal-to-Noise Ratio (SNR).
+# and simultaneously decreases the correlation between the original and recovered 
+# demonstrating that higher channel noise degrades communication quality and makes 
+
+fig, ax1 = plt.subplots(figsize=(8, 5))
+ax1.plot(noise_sweep, snr_sweep_db, "o-", color="tab:blue", label="SNR (dB)")
+ax1.set_xlabel("Noise standard deviation")
+ax1.set_ylabel("SNR (dB)", color="tab:blue")
+ax1.tick_params(axis="y", labelcolor="tab:blue")
+ax2 = ax1.twinx()
+ax2.plot(noise_sweep, quality, "s--", color="tab:red",
+         label="Correlation (recovered vs original)")
+ax2.set_ylabel("Recovery quality (correlation)", color="tab:red")
+ax2.tick_params(axis="y", labelcolor="tab:red")
+plt.title("Experiment 1b: SNR vs noise level, and recovery quality")
+fig.tight_layout()
+fig.savefig("exp1_snr_vs_noise.png", dpi=150)
+
+
+# (a) Analog: AM vs FM at the same (fairly high) noise level
+print("\n" + "=" * 60)
+print("EXPERIMENT 2: Modulation-scheme comparison")
+print("=" * 60)
+# ---------- (a) AM vs FM ----------
+sigma_analog = 0.5            # directly using the std for noise power rather than a arrray of val
+kf = 30.0                     # FM frequency deviation (Hz per unit message amplitude). determines
+# FM transmitter: instantaneous frequency = fc + kf * message
+phase = 2 * np.pi * fc * t + 2 * np.pi * kf * np.cumsum(message) / fs
+fm_tx = np.cos(phase) # transmitted frequency modulated signal
+
+noise = rng.normal(0, sigma_analog, len(t))
+
+am_rx = am_transmit(message) + noise # add noise to the fm signal as well as the am signal to si
+fm_rx = fm_tx + noise
+
+am_rec = am_receive(am_rx) # recievd am signal
+
+analytic = hilbert(fm_rx)
+inst_phase = np.unwrap(np.angle(analytic))
+inst_freq = np.diff(inst_phase) * fs / (2 * np.pi)       # Hz
+fm_rec = (inst_freq - fc) / kf                           # undo the FM mapping
+fm_rec = fm_rec - np.mean(fm_rec) # recived fm signal
+
+# light smoothing (moving average) - FM discriminators always low-pass filter
+win = 25
+fm_rec_smooth = np.convolve(fm_rec, np.ones(win) / win, mode="same") # acts as a low pass filter
+am_corr = np.corrcoef(message, am_rec)[0, 1]
+fm_corr = np.corrcoef(message[:-1], fm_rec_smooth)[0, 1]
+
+print(f"  AM recovery correlation at noise std {sigma_analog}: {am_corr:.3f}") # to print the co
+print(f"  FM recovery correlation at noise std {sigma_analog}: {fm_corr:.3f}")
+
+fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+axes[0].plot(t, message, "k")
+axes[0].set_title("Original message (5 Hz tone)")
+axes[1].plot(t, am_rec, color="tab:blue")
+axes[1].set_title(f"AM + envelope detection (corr = {am_corr:.3f})")
+axes[2].plot(t[:-1], fm_rec_smooth, color="tab:green")
+axes[2].set_title(f"FM + phase-derivative detection (corr = {fm_corr:.3f})")
+axes[2].set_xlabel("Time (s)")
+fig.suptitle(f"Experiment 2a: AM vs FM at the same noise level (std = {sigma_analog})")
+fig.tight_layout()
+fig.savefig("exp2_am_vs_fm.png", dpi=150)
+
+
+
+
+
+#--------- (b) ASK vs PSK ---------
+# (b) Digital: ASK vs PSK BER curves - PSK should win
+
+def digital_ber(num_bits, snr_db, scheme): # to calculate bit rate error
+    """BER for on-off ASK (OOK) or BPSK over AWGN at a given average SNR."""
+    bits = rng.integers(0, 2, num_bits) # genrate a sequnce of random bits ie a sequn
+
+    if scheme == "PSK":                  # BPSK: 0 -> -1, 1 -> +1 (avg energy = 1)
+        symbols = 2 * bits - 1.0  # converts 1 to +1 and 0 to -1
+        avg_energy = 1.0
+        threshold = 0.0 # means if recived signal > 0 means 1 else 0
+    elif scheme == "ASK":                # OOK: 0 -> 0, 1 -> +sqrt(2) (avg energy = 1)
+        amp = np.sqrt(2.0)
+        symbols = bits * amp
+        avg_energy = 1.0
+        threshold = amp / 2 # means if recived signal > amp/2 means 1 else 0
+    else:
+        raise ValueError(scheme)
+
+    snr_linear = 10 ** (snr_db / 10)
+    noise_std = np.sqrt(avg_energy / (2 * snr_linear)) # to calculate noise stnadard
+    received = symbols + rng.normal(0, noise_std, num_bits) # add noise to the reciev
+    detected = (received > threshold).astype(int) # will covert the signal to 0 and 1
+    return np.mean(detected != bits) # to mark the error bits and basically count ther
+num_bits_cmp = 200_000
+snr_range_db = np.arange(0, 13, 1)
+
+ber_ask = [digital_ber(num_bits_cmp, s, "ASK") for s in snr_range_db] # calcultes the
+ber_psk = [digital_ber(num_bits_cmp, s, "PSK") for s in snr_range_db]
+
+# plot the graphs blue is ask while orange is psk. as snr increase ber decreases be
+plt.figure(figsize=(7, 5))
+plt.semilogy(snr_range_db, ber_ask, "s-", label="ASK (on-off keying)")
+plt.semilogy(snr_range_db, ber_psk, "o-", label="PSK (BPSK)")
+plt.xlabel("Average SNR (dB)")
+plt.ylabel("Bit Error Rate")
+plt.title("Experiment 2b: ASK vs PSK noise resistance")
+plt.grid(True, which="both", alpha=0.4)
+plt.legend()
+plt.tight_layout()
+plt.savefig("exp2_ask_vs_psk.png", dpi=150)
+print(f"  At 8 dB: ASK BER = {ber_ask[8]:.2e},  PSK BER = {ber_psk[8]:.2e}")
+print("  -> PSK is more robust: its two states are +1/-1 (maximum separation),")
+print("while ASK 'wastes' half the decision distance by turning one state off.")
+
+
+
+
+#=======================================================
+# EXPERIMENT 3 – BER vs SNR: 1e6 bits, BPSK + QPSK + theory
+#=======================================================
+print("\n" + "=" * 60)
+print("EXPERIMENT 3: BER vs SNR (1,000,000 bits) with QPSK extension")
+print("=" * 60)
+
+def bpsk_ber(num_bits, snr_db): # calculates ber of bpsk
+    bits = rng.integers(0, 2, num_bits) # generate random bits
+    symbols = 2 * bits - 1.0  # BPSK: 0 -> -1, 1 -> +1 (avg energy = 1) convert b
+    snr_linear = 10 ** (snr_db / 10)
+    noise = rng.normal(0, np.sqrt(1 / (2 * snr_linear)), num_bits) # genearte noi
+    detected = (symbols + noise > 0).astype(int) # add noise to the message and g
+    return np.mean(detected != bits) # compare with original signal and mark the
+
+def qpsk_ber(num_bits, snr_db):
+    """
+    Gray-coded QPSK: two bits per symbol on I and Q.
+    SNR here is per-SYMBOL (Es/N0), same total symbol energy as BPSK,
+    so each bit only gets half the energy -> worse BER at the same SNR.
+    """
+    num_bits -= num_bits % 2 # make number of bits even as we are using qpsk
+    bits = rng.integers(0, 2, num_bits) # generate bits
+    i_bits, q_bits = bits[0::2], bits[1::2] # divide the bits into to components
+    # unit symbol energy split across I and Q
+    i_sym = (2 * i_bits - 1) / np.sqrt(2) # +1/√2 for +1 , -1/√2 for -1 so that a
+    q_sym = (2 * q_bits - 1) / np.sqrt(2)
+
+    snr_linear = 10 ** (snr_db / 10)
+    noise_std = np.sqrt(1 / (2 * snr_linear)) # create the noise
+    i_rx = i_sym + rng.normal(0, noise_std, len(i_sym)) # add noise to simulate r
+    q_rx = q_sym + rng.normal(0, noise_std, len(q_sym))
+    det = np.empty(num_bits, dtype=int)
+    det[0::2] = (i_rx > 0).astype(int) # detect the messeage by convert
+    det[1::2] = (q_rx > 0).astype(int)
+    return np.mean(det != bits) # return ber
+
+num_bits_big = 1_000_000
+snr_range_db = np.arange(0, 13, 1)
+snr_linear = 10 ** (snr_range_db / 10)
+
+ber_bpsk = [bpsk_ber(num_bits_big, s) for s in snr_range_db]
+ber_qpsk = [qpsk_ber(num_bits_big, s) for s in snr_range_db]
+
+# Theoretical curves (Q(x) = 0.5*erfc(x/sqrt(2)))
+theory_bpsk = 0.5 * erfc(np.sqrt(snr_linear))             # Q(sqrt(2*SNR))
+theory_qpsk = 0.5 * erfc(np.sqrt(snr_linear / 2))         # each bit gets Es/2
+
+plt.figure(figsize=(8, 5.5))
+plt.semilogy(snr_range_db, ber_bpsk, "o", color="tab:blue", label="BPSK (simulated, 1e6 bits)")
+plt.semilogy(snr_range_db, theory_bpsk, "-", color="tab:blue", alpha=0.6, label="BPSK (theory)")
+plt.semilogy(snr_range_db, ber_qpsk, "s", color="tab:orange", label="QPSK (simulated, 1e6 bits)")
+plt.semilogy(snr_range_db, theory_qpsk, "-", color="tab:orange", alpha=0.6, label="QPSK (theory)")
+plt.xlabel("SNR per symbol, Es/N0 (dB)")
+plt.ylabel("Bit Error Rate")
+plt.title("Experiment 3: BER vs SNR — BPSK vs QPSK (2x data rate)")
+plt.grid(True, which="both", alpha=0.4)
+plt.ylim(1e-6, 1)
+plt.legend()
+plt.tight_layout()
+plt.savefig("exp3_ber_bpsk_qpsk.png", dpi=150)
+for s in (4, 8, 12):
+    idx = int(np.where(snr_range_db == s)[0][0])
+    print(f"  SNR {s:2d} dB:  BPSK BER = {ber_bpsk[idx]:.2e}   QPSK BER = {ber_qpsk[idx]:.2e}")
+print("QPSK carries 2 bits/symbol (double the data rate) but needs ~3 dB")
+print("more symbol SNR for the same BER: the classic rate-vs-reliability tradeoff.")
+
+plt.show()
+
+
+Exp3: To visualize and understand how cellular networks reuse limited spectrum across multiple geographic cells and compare N=3 and N=7 based on:
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from matplotlib.patches import RegularPolygon
+
+LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# %%
+# ----------------------------------------------------------------------
+# STEP 1 - Hexagonal geometry: coverts axial (q, r) -> Cartesian (x, y) 
+# ----------------------------------------------------------------------
+def axial_to_pixel(q, r, R): # (q,r) are axial coordinates which are used to represents the vertices of hexagon and R is used to represent the radius of hexagon
+    """Flat-top hexagon axial coordinates -> Cartesian pixel coordinates."""
+    x = 1.5 * R * q # calculate x coordinate of hexagon centre
+    y = np.sqrt(3) * R * (r + q / 2.0) # y cooredinate of centre
+    return x, y
+
+# %%
+# ----------------------------------------------------------------------
+# STEP 2 - Cluster definition and the general co-channel label
+# ----------------------------------------------------------------------
+def build_cluster(i, j):
+    """Cluster size N and the two lattice vectors that generate it."""
+    N = i**2 + i * j + j**2
+    A = (i, j)           # move i cells, move j cells
+    B = (-j, i + j)      # A rotated by 60 degrees
+    return N, A, B 
+
+# %%
+def make_labeller(i, j, N):
+    """
+    Return a function label(q, r) -> integer 0..N-1 that is identical on
+    two cells if and only if they are co-channel. Works for ALL valid
+    (i, j), including non-coprime pairs like (2, 2) for N = 12.
+    """
+    pair_to_id = {}
+
+    def label(q, r):
+        u = ((i + j) * q + j * r) % N
+        v = (-j * q + i * r) % N
+        key = (u, v)
+        if key not in pair_to_id:
+            pair_to_id[key] = len(pair_to_id)
+        return pair_to_id[key]
+
+    return label
+
+# %%
+# ----------------------------------------------------------------------
+# STEP 3 + 4 + 5 - Generate/draw the reuse pattern, highlight co-channel
+#                  cells, measure D, verify D/R = sqrt(3N)
+# ----------------------------------------------------------------------
+def generate_reuse_pattern(i, j, R=1.0, grid_span=7, save=True):
+    """Build one complete reuse pattern and return (figure, results dict)."""
+    N, A, B = build_cluster(i, j)
+    label = make_labeller(i, j, N)
+    # --- generate all cells inside a square viewing window ---
+    centers = []
+    window = grid_span * 1.55 * R
+    for q in range(-grid_span - 2, grid_span + 3):
+        for r in range(-grid_span - 2, grid_span + 3):
+            x, y = axial_to_pixel(q, r, R)
+            if abs(x) > window or abs(y) > window:
+                continue
+            centers.append((x, y, label(q, r)))
+    n_labels = len({lab for _, _, lab in centers})
+    assert n_labels == N, f"labelling produced {n_labels} labels, expected {N}"
+    # --- draw the reuse pattern ---
+    fig, ax = plt.subplots(figsize=(7.2, 7.2))
+    for x, y, lab in centers:
+        color = "#e74c3c" if lab == 0 else "#dfe6e9"
+        ax.add_patch(RegularPolygon(
+            (x, y), numVertices=6, radius=R * 0.985, orientation=0,
+            edgecolor="black", facecolor=color, linewidth=0.8))
+        letter = LETTERS[lab] if lab < 26 else str(lab)
+        ax.text(x, y, letter, ha="center", va="center", fontsize=9,
+                fontweight="bold" if lab == 0 else "normal",
+                color="white" if lab == 0 else "black")
+
+    # --- collect co-channel ("A") centres and measure D from geometry ---
+    co = np.array([(x, y) for x, y, lab in centers if lab == 0])
+    nearest = []
+    for x0, y0 in co:
+        d = np.hypot(co[:, 0] - x0, co[:, 1] - y0)
+        d = d[d > 1e-9]
+        if len(d):
+            nearest.append(d.min())
+    D_measured = float(np.median(nearest))
+    D_theory = R * np.sqrt(3 * N)
+    assert abs(D_measured - D_theory) < 1e-6 * R, "geometry check failed!"
+
+    # --- draw one measured-D line, as Step 4 of the procedure asks ---
+    p0 = co[np.argmin(np.hypot(co[:, 0], co[:, 1]))]          # nearest to centre
+    d0 = np.hypot(co[:, 0] - p0[0], co[:, 1] - p0[1])
+    d0[d0 < 1e-9] = np.inf
+    p1 = co[np.argmin(d0)]
+    ax.plot([p0[0], p1[0]], [p0[1], p1[1]], "b--", lw=2)
+    ax.annotate(f"D = {D_measured:.3f}", ((p0[0]+p1[0])/2, (p0[1]+p1[1])/2),
+                textcoords="offset points", xytext=(0, 10),
+                color="blue", fontsize=11, fontweight="bold", ha="center")
+
+    ax.set_xlim(-window - R, window + R)
+    ax.set_ylim(-window - R, window + R)
+    ax.set_aspect("equal"); ax.axis("off")
+    ax.set_title(f"Frequency Reuse Pattern, N = {N}  (i = {i}, j = {j})   "
+                 f"D/R = {D_measured/R:.3f}", fontsize=12)
+    fname = f"reuse_N{N}.png"
+    if save:
+        fig.savefig(fname, dpi=200, bbox_inches="tight")
+
+    # --- engineering numbers: first-tier SIR and per-cell capacity ---
+    n_path = 4.0                        # urban path-loss exponent
+    Q = D_theory / R                    # co-channel reuse ratio, sqrt(3N)
+    sir_db = 10 * np.log10((Q ** n_path) / 6.0)   # 6 first-tier interferers
+    total_channels = 420                # example licensed spectrum
+    per_cell = total_channels // N
+
+    return fig, dict(N=N, i=i, j=j, ratio_theory=D_theory / R,
+                     ratio_measured=D_measured / R, sir_db=sir_db,
+                     channels_per_cell=per_cell, file=fname)
+
+# %%
+# ----------------------------------------------------------------------
+# EXTRA OUTPUT 1 - Combined overview of ALL reuse patterns side by side
+# ----------------------------------------------------------------------
+def generate_patterns_overview(results, fname="reuse_patterns_overview.png"):
+    """Assemble the saved individual patterns into one 1 x 2 overview figure."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    for ax, res in zip(np.atleast_1d(axes).flat, results):
+        ax.imshow(mpimg.imread(res["file"]))
+        ax.axis("off")
+        ax.set_title(f"N = {res['N']}   D/R = {res['ratio_measured']:.3f}   "
+                     f"SIR = {res['sir_db']:.1f} dB", fontsize=11)
+    fig.suptitle("Frequency reuse patterns for cluster sizes N = 3, 7", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150, bbox_inches="tight")
+    return fig
+
+# %%
+# ----------------------------------------------------------------------
+# EXTRA OUTPUT 2 - Capacity-vs-interference tradeoff curve
+# ----------------------------------------------------------------------
+def generate_tradeoff_curve(results, fname="tradeoff_curve.png"):
+    Ns = np.array([r["N"] for r in results])
+    sir = np.array([r["sir_db"] for r in results])
+    ch = np.array([r["channels_per_cell"] for r in results])
+
+    fig, ax1 = plt.subplots(figsize=(7, 5))
+    ax1.plot(Ns, sir, "o-", color="tab:green", lw=2)
+    ax1.set_xlabel("Cluster size N")
+    ax1.set_ylabel("First-tier SIR (dB)", color="tab:green")
+    ax1.tick_params(axis="y", labelcolor="tab:green")
+    ax1.axhline(18, color="gray", ls=":", lw=1)
+    ax1.text(Ns[0] + 0.1, 18.3, "typical 18 dB requirement",
+             fontsize=9, color="gray")
+    ax2 = ax1.twinx()
+    ax2.plot(Ns, ch, "s--", color="tab:purple", lw=2)
+    ax2.set_ylabel("Channels per cell (420 total)", color="tab:purple")
+    ax2.tick_params(axis="y", labelcolor="tab:purple")
+    plt.title("Capacity vs Interference tradeoff across cluster sizes")
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+# %%
+# ----------------------------------------------------------------------
+# MAIN - generate reuse patterns for N = 3 and 7,
+#        print the verification table, and DISPLAY all figures on screen
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    configs = [(1, 1), (1, 2)]
+    # N =        3       7
+    hdr = (f"{'N':>3} {'(i,j)':>7} {'D/R theory':>11} {'D/R measured':>13} "
+           f"{'SIR (dB)':>9} {'ch/cell':>8}")
+    print(hdr); print("-" * len(hdr))
+    results = []
+    for i, j in configs:
+        fig, res = generate_reuse_pattern(i, j)
+        results.append(res)
+        print(f"{res['N']:>3} ({res['i']},{res['j']})"
+              f"{res['ratio_theory']:>12.3f}{res['ratio_measured']:>14.3f}"
+              f"{res['sir_db']:>10.2f}{res['channels_per_cell']:>9}")
+    generate_patterns_overview(results)
+    generate_tradeoff_curve(results)
+    print("\nAll geometry checks passed: measured D/R = sqrt(3N) exactly.")
+    print("Saved: " + ", ".join(r["file"] for r in results)
+          + ", reuse_patterns_overview.png, tradeoff_curve.png")
+    plt.show()
+
+
+
+
+Exp 4: Wi-fi Network Scanning: SSID, RSSI, Channel Mapping.
+# %%
+import csv
+import os
+import re
+import subprocess
+import sys
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ----------------------------------------------------------------------
+# STEP 1 - Getting the data: live OS scan (three platforms) or CSV
+# ----------------------------------------------------------------------
+def freq_to_channel(mhz): # to identify which frequency band belongs to which channel
+    """Convert a centre frequency in MHz to a Wi-Fi channel number."""
+    if 2412 <= mhz <= 2472:
+        return (mhz - 2407) // 5          # 2.4 GHz: ch 1..13
+    if mhz == 2484:
+        return 14                          # Channel 14 is a special 2.4 GHz Wi-Fi channel associated with Japan and is not part of the normal 1–13 channel set used in most regions.
+    if 5000 <= mhz <= 5900:
+        return (mhz - 5000) // 5           # 5 GHz: ch 36, 40, ...
+    return None
+# %%
+
+
+def scan_windows(): # to scan nearby networks and extracts SSID, Signal, Channel
+    """Parse 'netsh wlan show networks mode=bssid' (Windows)."""
+    out = subprocess.run(
+        ["netsh", "wlan", "show", "networks", "mode=bssid"],
+        capture_output=True, text=True).stdout
+    nets, ssid = [], None
+    for line in out.splitlines():
+        line = line.strip()
+        m = re.match(r"SSID \d+ : (.*)", line)
+        if m:
+            ssid = m.group(1).strip() or "<hidden>"
+        m = re.match(r"Signal\s*:\s*(\d+)%", line)
+        if m and ssid is not None:
+            pct = int(m.group(1))
+            rssi = pct / 2 - 100          # standard %-to-dBm approximation
+            nets.append({"ssid": ssid, "rssi": rssi, "channel": None})
+        m = re.match(r"Channel\s*:\s*(\d+)", line)
+        if m and nets and nets[-1]["channel"] is None:
+            nets[-1]["channel"] = int(m.group(1))
+    return [n for n in nets if n["channel"] is not None]
+# %%
+
+def scan_linux():
+    """Parse 'nmcli -t -f SSID,SIGNAL,CHAN dev wifi' (Linux)."""
+    out = subprocess.run(
+        ["nmcli", "-t", "-f", "SSID,SIGNAL,CHAN", "dev", "wifi"],
+        capture_output=True, text=True).stdout
+    nets = []
+    for line in out.splitlines():
+        parts = line.rsplit(":", 2)        # SSID may itself contain ':'
+        if len(parts) != 3:
+            continue
+        ssid, signal, chan = parts
+        try:
+            pct, ch = int(signal), int(chan)
+        except ValueError:
+            continue
+        nets.append({"ssid": ssid or "<hidden>",
+                     "rssi": pct / 2 - 100, "channel": ch})
+    return nets
+# %%
+
+def scan_macos():
+    """Parse the macOS 'airport -s' scan output."""
+    airport = ("/System/Library/PrivateFrameworks/Apple80211.framework/"
+               "Versions/Current/Resources/airport")
+    out = subprocess.run([airport, "-s"], capture_output=True, text=True).stdout
+    nets = []
+    for line in out.splitlines()[1:]:
+        m = re.match(r"\s*(.+?)\s+([0-9a-f:]{17})\s+(-\d+)\s+(\d+)", line)
+        if m:
+            nets.append({"ssid": m.group(1).strip(),
+                         "rssi": float(m.group(3)),
+                         "channel": int(m.group(4).split(",")[0])})
+    return nets
+
+# %%
+
+SAMPLE_CSV = """SSID,RSSI_dBm,Channel
+MyHomeWiFi,-42,6
+Airtel_4G21,-58,1
+JioFiber_2G,-61,6
+TP-Link_A3F2,-66,6
+Neighbour_2G,-70,1
+Excitel_204,-72,11
+D-Link_Home,-75,4
+ACT_Fibernet,-77,9
+CoffeeShop_Free,-81,11
+MyHomeWiFi_5G,-48,36
+JioFiber_5G,-63,44
+OnePlus_Hotspot,-69,149
+"""
+def load_csv(fname="wifi_scan.csv"):
+    """Read manually recorded readings (from the phone app) out of a CSV."""
+    if not os.path.exists(fname):
+        with open(fname, "w") as f:
+            f.write(SAMPLE_CSV)
+        print(f"[i] No {fname} found - a SAMPLE file was created. Replace its")
+        print("    rows with your own readings from the phone app, then rerun.")
+    nets = []
+    with open(fname) as f:
+        for row in csv.DictReader(f):
+            nets.append({"ssid": row["SSID"],
+                         "rssi": float(row["RSSI_dBm"]),
+                         "channel": int(row["Channel"])})
+    return nets
+# %%
+
+
+def get_networks():
+    """Try a live scan for this OS; fall back to the CSV if it fails."""
+    try:
+        if sys.platform.startswith("win"):
+            nets = scan_windows()
+        elif sys.platform == "darwin":
+            nets = scan_macos()
+        else:
+            nets = scan_linux()
+        if nets:
+            print(f"[i] Live scan found {len(nets)} networks.")
+            return nets, "live scan"
+    except (FileNotFoundError, OSError):
+        pass
+    print("[i] Live scan unavailable - using wifi_scan.csv instead.")
+    return load_csv(), "wifi_scan.csv"
+
+# %%
+
+# ----------------------------------------------------------------------
+# STEP 2 - Record SSID / RSSI / channel / band in a summary table
+# ----------------------------------------------------------------------
+def quality(rssi): # converts Rssi values to remarks for better understanding
+    """Map an RSSI reading to the standard signal-quality wording."""
+    if rssi >= -50: return "Excellent"
+    if rssi >= -60: return "Good"
+    if rssi >= -70: return "Fair"
+    if rssi >= -80: return "Weak"
+    return "Very poor"
+
+def band_of(channel): # determinr the band either 2,4 GHz or 5Ghz
+    return "2.4 GHz" if channel <= 14 else "5 GHz"
+
+def print_table(nets):
+    print(f"\n{'SSID':<20} {'RSSI (dBm)':>10} {'Channel':>8} "
+          f"{'Band':>8} {'Quality':>10}")
+    print("-" * 62)
+    for n in sorted(nets, key=lambda n: n["rssi"], reverse=True):
+        print(f"{n['ssid'][:20]:<20} {n['rssi']:>10.0f} {n['channel']:>8} "
+              f"{band_of(n['channel']):>8} {quality(n['rssi']):>10}")
+# ----------------------------------------------------------------------
+# STEP 3 - The channel graph: one curve per 2.4 GHz network
+# ----------------------------------------------------------------------
+#Show which Wi-Fi networks are using which 2.4 GHz channels, and how strong those networks are.
+def plot_channel_graph(nets, fname="channel_graph_24ghz.png"):
+    """
+    Draw each 2.4 GHz network as a curve centred on its channel.
+    A 20 MHz-wide transmission on channel c occupies roughly channels
+    c-2 .. c+2 (channels are only 5 MHz apart), which is why the curves
+    overlap - exactly what the phone app shows.    """
+    nets24 = [n for n in nets if n["channel"] <= 14] #only take the 2.4 ghz channels
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    cmap = plt.cm.tab10
+    floor = -95                            # graph floor (below = unusable) use the lowest value upto -95 as below those the signal strenght is very weak and negligible
+    for k, n in enumerate(nets24):
+        c, r = n["channel"], n["rssi"]
+        x = np.linspace(c - 2, c + 2, 200)
+        y = floor + (r - floor) * np.cos((x - c) / 2 * np.pi / 2) ** 2 #creating a smooth hump, Instead of drawing a rectangular block, it uses a cosine-squared curve to create a smooth shape.
+        color = cmap(k % 10)
+        ax.plot(x, y, color=color, lw=2)
+        ax.fill_between(x, floor, y, color=color, alpha=0.15)
+        ax.annotate(n["ssid"], (c, r), textcoords="offset points",
+                    xytext=(0, 4), ha="center", fontsize=8, color=color)
+    for c in (1, 6, 11):                   # the three non-overlapping channels
+        ax.axvline(c, color="gray", ls=":", lw=1)
+    ax.set_xticks(range(1, 14))
+    ax.set_xlim(-1.5, 15.5)
+    ax.set_ylim(floor, -25)
+    ax.set_xlabel("2.4 GHz channel number")
+    ax.set_ylabel("RSSI (dBm)")
+    ax.set_title("Channel graph - each network drawn on its channel "
+                 "(dotted lines: non-overlapping channels 1, 6, 11)")
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+# %%
+
+# ----------------------------------------------------------------------
+# STEP 4 - Congestion analysis and channel recommendation
+# ----------------------------------------------------------------------
+def congestion(nets):
+    """
+    Count how many networks OVERLAP each 2.4 GHz channel, not just how many
+    are centred on it: a network on channel c interferes with channels
+    c-2 .. c+2. This is the number that actually predicts contention.
+    """
+    counts = {c: 0 for c in range(1, 14)}
+    for n in nets:
+        if n["channel"] <= 14:
+            for c in range(max(1, n["channel"] - 2),
+                           min(13, n["channel"] + 2) + 1):
+                counts[c] += 1
+    return counts
+
+def plot_congestion(nets, fname="channel_congestion.png"):
+    counts = congestion(nets)
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    colors = ["#2ecc71" if c in (1, 6, 11) else "#95a5a6"
+              for c in counts]
+    ax.bar(list(counts.keys()), list(counts.values()), color=colors)
+    ax.set_xticks(range(1, 14))
+    ax.set_xlabel("2.4 GHz channel number")
+    ax.set_ylabel("Networks overlapping this channel")
+    ax.set_title("Channel congestion (green = the non-overlapping "
+                 "channels 1, 6, 11)")
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+def recommend_channel(nets):
+    counts = congestion(nets)
+    best = min((1, 6, 11), key=lambda c: counts[c])
+    print("\nCongestion on the three non-overlapping channels:")
+    for c in (1, 6, 11):
+        print(f"   channel {c:>2}: {counts[c]} overlapping network(s)")
+    print(f"[>] Recommended channel for a new 2.4 GHz router here: {best}")
+    return best
+
+# ----------------------------------------------------------------------
+# MAIN - run the whole survey
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    nets, source = get_networks()
+
+    print(f"\n=== Wi-Fi survey ({source}) ===")
+    print_table(nets)
+
+    n24 = sum(1 for n in nets if n["channel"] <= 14)
+    n5 = len(nets) - n24
+    print(f"\nBand summary: {n24} networks on 2.4 GHz, {n5} on 5 GHz.")
+
+    plot_channel_graph(nets)
+    plot_congestion(nets)
+    recommend_channel(nets)
+
+    print("\nSaved: channel_graph_24ghz.png, channel_congestion.png")
+    plt.show()
+
+
+Exp 5: Signal strength (RSSI) v/s Distance for Wi-fi Router.
+
+# %%
+
+import csv
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+F_MHZ = 2400.0          # 2.4 GHz Wi-Fi. Use 5000-5800 for a 5 GHz survey.
+D0 = 1.0                # reference distance d0 = 1 m (the standard choice)
+# ----------------------------------------------------------------------
+# STEP 1 - Data input: your field readings from the phone app
+# ----------------------------------------------------------------------
+SAMPLE_CSV = """Distance_m,RSSI1_dBm,RSSI2_dBm
+1,-35,-37
+2,-42,-40
+5,-55,-53
+10,-65,-67
+15,-72,-70
+20,-78,-76
+"""
+def load_readings(fname="rssi_distance.csv"): #to read the csv file
+    """Read (distance, [readings...]) rows; create a sample on first run."""
+    if not os.path.exists(fname):
+        with open(fname, "w") as f:
+            f.write(SAMPLE_CSV)
+        print(f"[i] No {fname} found - a SAMPLE file was created with the")
+        print("    handout's illustrative values. Replace them with your own")
+        print("    field readings, then rerun.")
+    dists, all_readings = [], []
+    with open(fname) as f:
+        for row in csv.reader(f):
+            if not row or row[0].startswith("Distance"):
+                continue                       # skip header / blank lines
+            dists.append(float(row[0]))
+            all_readings.append([float(v) for v in row[1:] if v.strip()])
+    return np.array(dists), all_readings
+
+# %%
+
+# ----------------------------------------------------------------------
+# STEP 2 - Average the repeat readings (and keep their spread)
+# ----------------------------------------------------------------------
+def average_readings(all_readings):
+    """Mean and spread (std dev) of the repeat readings at each distance."""
+    means = np.array([np.mean(r) for r in all_readings]) #to get mean of all the rssi readings
+    spreads = np.array([np.std(r) for r in all_readings])# to calculate how much the readings vary from each other only for a particular reading
+    return means, spreads 
+
+# ----------------------------------------------------------------------
+# STEP 3 - Theory: FSPL and the free-space prediction
+# ----------------------------------------------------------------------
+def fspl_db(d, f_mhz=F_MHZ):
+    """Free Space Path Loss in dB (d in metres, f in MHz)."""
+    return 20 * np.log10(d) + 20 * np.log10(f_mhz) - 27.55 # calculates free space path loss for every distance
+
+def free_space_prediction(d, rssi_at_d0):
+    """
+    Free-space RSSI curve ANCHORED at your own d0 = 1 m measurement:
+        RSSI(d) = RSSI(d0) - [FSPL(d) - FSPL(d0)]
+                = RSSI(d0) - 20*log10(d/D0)
+    Anchoring removes the unknown router transmit power and antenna gains
+    from the comparison - only the SHAPE of the decay is being tested.
+    """
+    return rssi_at_d0 - 20 * np.log10(d / D0)
+# %%
+
+# ----------------------------------------------------------------------
+# STEP 4 - Fit the Log-Distance Path Loss Model: find YOUR n
+# ----------------------------------------------------------------------
+def fit_path_loss_exponent(dists, rssi_means):
+    """
+    Log-distance model: RSSI(d) = RSSI(d0) - 10*n*log10(d/d0).
+    Rearranged, RSSI is LINEAR in x = 10*log10(d/d0) with slope -n,
+    so a least-squares straight-line fit gives n directly.
+    Returns (n, rssi_d0_fit, sigma) where sigma is the shadowing spread
+    X_sigma - the std dev of the residuals around the fitted line.
+    """
+    x = 10 * np.log10(dists / D0) 
+    slope, intercept = np.polyfit(x, rssi_means, 1) 
+    n = -slope 
+    residuals = rssi_means - (slope * x + intercept)
+    sigma = float(np.std(residuals))
+    return n, intercept, sigma
+
+def classify_environment(n):
+    if n < 2.2:  return "free-space-like (open, unobstructed)"
+    if n < 3.0:  return "lightly obstructed indoor / open corridor"
+    if n < 4.0:  return "typical indoor with walls and furniture"
+    return "heavily obstructed indoor (many walls / floors)"
+
+# %%
+
+# ----------------------------------------------------------------------
+# STEP 5 - Report table and figures
+# ----------------------------------------------------------------------
+def print_table(dists, all_readings, means, theory, fitted):
+    n_rd = max(len(r) for r in all_readings)
+    hdr = ("Dist (m)  " + "".join(f"R{k+1} (dBm)  " for k in range(n_rd))
+           + "Avg (dBm)  Free-space  Fitted model  Extra loss")
+    print("\n" + hdr)
+    print("-" * len(hdr))
+    for i, d in enumerate(dists):
+        rd = "".join(f"{v:>8.0f}  " for v in all_readings[i]).ljust(n_rd * 10)
+        extra = theory[i] - means[i]        # how far BELOW free space we are
+        print(f"{d:>7.0f}  {rd}{means[i]:>8.1f}  {theory[i]:>10.1f}  "
+              f"{fitted[i]:>12.1f}  {extra:>9.1f}")
+
+def plot_rssi_vs_distance(dists, means, spreads, n, rssi_d0, fname="rssi_vs_distance.png"):
+    d_smooth = np.linspace(dists.min(), dists.max(), 300)
+    theory = free_space_prediction(d_smooth, means[0])
+    fitted = rssi_d0 - 10 * n * np.log10(d_smooth / D0)
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    ax.errorbar(dists, means, yerr=spreads, fmt="o", color="tab:blue",
+                capsize=4, markersize=7, label="Measured (avg \u00b1 spread)")
+    ax.plot(d_smooth, theory, "--", color="tab:green", lw=2,
+            label="Free space, n = 2 (anchored at 1 m)")
+    ax.plot(d_smooth, fitted, "-", color="tab:red", lw=2,
+            label=f"Fitted log-distance model, n = {n:.2f}") 
+    ax.set_xlabel("Distance from router (m)")
+    ax.set_ylabel("RSSI (dBm)")
+    ax.set_title("Signal strength vs distance: measurement, free-space "
+                 "theory, fitted model")
+    ax.grid(alpha=0.3) 
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+def plot_semilog(dists, means, spreads, n, rssi_d0,
+                 fname="rssi_vs_log_distance.png"):
+    d_smooth = np.linspace(dists.min(), dists.max(), 300)
+    fitted = rssi_d0 - 10 * n * np.log10(d_smooth / D0)
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    ax.errorbar(dists, means, yerr=spreads, fmt="o", color="tab:blue",
+                capsize=4, markersize=7, label="Measured (avg \u00b1 spread)")
+    ax.plot(d_smooth, fitted, "-", color="tab:red", lw=2,
+            label=f"Fitted line, slope = -10n = {-10*n:.1f} dB/decade")
+    ax.set_xscale("log")
+    ax.set_xticks(dists)
+    ax.set_xticklabels([f"{d:g}" for d in dists])
+    ax.set_xlabel("Distance from router (m) - log scale")
+    ax.set_ylabel("RSSI (dBm)")
+    ax.set_title("The same data on a log-distance axis: the decay "
+                 "becomes a straight line")
+    ax.grid(alpha=0.3, which="both")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+# %%
+
+# ----------------------------------------------------------------------
+# MAIN - run the whole analysis
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    dists, all_readings = load_readings()
+    means, spreads = average_readings(all_readings)
+    # theory curve at the measurement distances (anchored at d0 = 1 m)
+    theory = free_space_prediction(dists, means[0])
+    # fit the log-distance model
+    n, rssi_d0_fit, sigma = fit_path_loss_exponent(dists, means)
+    fitted = rssi_d0_fit - 10 * n * np.log10(dists / D0)
+    print("\n=== RSSI vs distance survey (f = %.0f MHz) ===" % F_MHZ)
+    print_table(dists, all_readings, means, theory, fitted)
+    print(f"\nAbsolute FSPL at 1 m and {F_MHZ:.0f} MHz: "
+          f"{fspl_db(1.0):.1f} dB")
+    print(f"Implied router EIRP (RSSI at 1 m + FSPL at 1 m): "
+          f"{means[0] + fspl_db(1.0):.1f} dBm")
+    print(f"\nFitted path loss exponent  n = {n:.2f}")
+    print(f"Shadowing spread       sigma = {sigma:.2f} dB")
+    print(f"Environment classification : {classify_environment(n)}")
+    print(f"Rule-of-thumb check: doubling distance costs "
+          f"{10 * n * np.log10(2):.1f} dB here (free space: 6.0 dB)")
+    plot_rssi_vs_distance(dists, means, spreads, n, rssi_d0_fit)
+    plot_semilog(dists, means, spreads, n, rssi_d0_fit)
+    print("\nSaved: rssi_vs_distance.png, rssi_vs_log_distance.png")
+    plt.show()
+
+
+Exp 7: Study of Bluetooth communication using mobile devices (Paring, Range, Testing).
+
+connect the 7 devices and show 8th cant be connected
+Trial Number,Number of Tiles,Distance (ft),Distance (m),Sound Level
+Reading 1,27,27 ft,8.23 m,High
+Reading 2,28,28 ft,8.53 m,Medium
+Reading 3,29,29 ft,8.84 m,Low
+
+Average Distance=27+28+293=28 ft
+Converting feet to metres: Average Distance = 28×0.3048 = 8.5344 m ≈ 8.53 m
+
+Exp 8: Study and Implementation of Security in GSM
+
+import hashlib
+import secrets
+# ========================================================
+# A3 ALGORITHM - AUTHENTICATION
+# ========================================================
+
+def A3(Ki, RAND):
+
+    # Combine Ki and RAND
+    combined = Ki + RAND
+
+    # Process the combined value using SHA-256
+    hash_value = hashlib.sha256(combined.encode()).hexdigest()
+
+    # 32 bits = 8 hexadecimal characters
+    result = hash_value[:8]
+
+    return result
+
+
+# ========================================================
+# A8 ALGORITHM - KEY GENERATION
+# ========================================================
+
+def A8(Ki, RAND):
+
+    # Combine Ki and RAND
+    combined = Ki + RAND
+
+    print("Ki + RAND =", combined)
+
+    # Process Ki and RAND
+    hash_value = hashlib.sha256(
+        ("A8" + combined).encode()
+    ).hexdigest()
+
+    # 64 bits = 16 hexadecimal characters
+    Kc = hash_value[:16]
+
+    print("64-bit KC =", Kc)
+
+    return Kc
+
+
+# ========================================================
+# A5 ALGORITHM - BLOCK ENCRYPTION
+# ========================================================
+
+def A5_encrypt(message, Kc):
+
+    encrypted_blocks = []
+
+    # Convert Kc from hexadecimal to bytes
+    key = bytes.fromhex(Kc)
+
+    # Convert message into bytes
+    message_bytes = message.encode()
+
+    # Divide message into blocks of 8 bytes
+    block_size = 8
+
+    for i in range(0, len(message_bytes), block_size):
+
+        block = message_bytes[i:i + block_size]
+
+        print("\nPlaintext block =", block.decode())
+
+        # Encrypt block using XOR
+        encrypted_block = bytes(
+            block[j] ^ key[j % len(key)]
+            for j in range(len(block))
+        )
+
+        print("Encrypted block =", encrypted_block.hex())
+
+        encrypted_blocks.append(encrypted_block)
+
+    # Combine all encrypted blocks
+    encrypted_data = b''.join(encrypted_blocks)
+
+    return encrypted_data
+
+
+def A5_decrypt(encrypted_data, Kc):
+
+    decrypted_blocks = []
+
+    # Convert Kc from hexadecimal to bytes
+    key = bytes.fromhex(Kc)
+
+    # Divide encrypted data into blocks of 8 bytes
+    block_size = 8
+
+    for i in range(0, len(encrypted_data), block_size):
+
+        block = encrypted_data[i:i + block_size]
+
+        print("\nEncrypted block =", block.hex())
+
+        # XOR again to decrypt
+        decrypted_block = bytes(
+            block[j] ^ key[j % len(key)]
+            for j in range(len(block))
+        )
+
+        print("Decrypted block =", decrypted_block.decode())
+
+        decrypted_blocks.append(decrypted_block)
+
+    # Combine all decrypted blocks
+    decrypted_data = b''.join(decrypted_blocks)
+
+    return decrypted_data.decode()
+
+
+# ========================================================
+# BSS SIDE
+# ========================================================
+
+print("BSS SIDE")
+
+# Predefined 128-bit secret key
+Ki = "0123456789ABCDEF0123456789ABCDEF"
+
+print("Ki =", Ki)
+
+# Generate a 128-bit random number
+RAND = secrets.token_hex(16).upper()
+
+print("RANDOM NUMBER =", RAND)
+
+# BSS calculates SRES*
+SRES_star = A3(Ki, RAND)
+
+print("SRES* generated by BSS =", SRES_star)
+
+
+# ========================================================
+# MS SIDE
+# ========================================================
+
+print("\nMS SIDE")
+
+# MS receives RAND
+received_RAND = RAND
+
+print("Received RAND =", received_RAND)
+
+# MS has the same Ki
+MS_Ki = Ki
+
+print("MS Ki =", MS_Ki)
+
+# MS calculates SRES
+SRES = A3(MS_Ki, received_RAND)
+
+print("SRES generated by MS =", SRES)
+
+
+# ========================================================
+# AUTHENTICATION
+# ========================================================
+
+print("\nAUTHENTICATION")
+
+print("SRES* =", SRES_star)
+print("SRES  =", SRES)
+
+if SRES_star == SRES:
+
+    print("SRES* == SRES")
+    print("Authentication Successful.")
+    print("Mobile Station (MS) is authenticated.")
+
+    print("\nKEY GENERATION - A8")
+
+    Kc = A8(Ki, RAND)
+
+
+    # ====================================================
+    # MS SENDS MESSAGE
+    # ====================================================
+    print("\nMS -> BSS : DATA TRANSMISSION")
+
+    message = input("\nEnter message to send from MS to BSS: ")
+
+    # ====================================================
+    # ENCRYPTION AT MS
+    # ====================================================
+
+    print("\nMS SIDE - ENCRYPTION")
+
+    encrypted_data = A5_encrypt(message, Kc)
+
+    # ====================================================
+    # ENCRYPTED DATA SENT TO BSS
+    # ====================================================
+
+    print("\nMS SENDS ENCRYPTED DATA")
+
+    print("Encrypted data sent to BSS =",
+          encrypted_data.hex())
+
+    # ====================================================
+    # DECRYPTION AT BSS
+    # ====================================================
+
+    print("\nBSS SIDE - DECRYPTION")
+
+    decrypted_message = A5_decrypt(
+        encrypted_data,
+        Kc
+    )
+
+    # ====================================================
+    # RESULT
+    # ====================================================
+
+    print("\nRESULT")
+
+    print("Decrypted message =", decrypted_message)
+
+    if message == decrypted_message:
+        print("Encryption and Decryption Successful.")
+
+else:
+
+    print("\nSRES* != SRES")
+    print("Authentication Failed.")
+    print("Mobile Station (MS) is not authenticated.")
+    print("Encryption and Decryption will not be performed.")
+
+
+
+Exp 9: To study and analyse multipath propagation and small-scale fading in indoor and outdoor environments.
+
+import os
+import csv
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ---------------------------------------------------------
+# Constants and Sample Data
+# ---------------------------------------------------------
+WAVELENGTH_M = 0.125  # 12.5 cm at 2.4 GHz
+
+# Sample data matching Section 5 (Step 4) and Section 8
+SAMPLE_SCAN_CSV = """Position_cm,RSSI_Indoor_dBm,RSSI_Outdoor_dBm
+0,-52,-58
+10,-58,-59
+20,-50,-59
+30,-61,-60
+40,-49,-60
+50,-59,-61
+"""
+
+SAMPLE_STATIONARY_CSV = """Time_s,RSSI_dBm
+0,-52
+5,-53
+10,-51
+15,-55
+20,-52
+25,-54
+30,-51
+35,-56
+40,-53
+45,-52
+50,-54
+55,-53
+"""
+# %%
+
+
+# ---------------------------------------------------------
+# Step 1: Data Input Functions
+# ---------------------------------------------------------
+def load_scan(fname="scan.csv"):
+    if not os.path.exists(fname):
+        open(fname, "w").write(SAMPLE_SCAN_CSV)
+    pos, indoor, outdoor = [], [], []
+    for r in csv.reader(open(fname)):
+        if not r or r[0].startswith("Position"):
+            continue
+        pos.append(float(r[0]))
+        indoor.append(float(r[1]))
+        outdoor.append(float(r[2]) if len(r) > 2 and r[2].strip() else np.nan)
+    return np.array(pos), np.array(indoor), np.array(outdoor)
+
+def load_stationary(fname="stationary.csv"):
+    if not os.path.exists(fname):
+        open(fname, "w").write(SAMPLE_STATIONARY_CSV)
+    time_s, rssi = [], []
+    for r in csv.reader(open(fname)):
+        if not r or r[0].startswith("Time"):
+            continue
+        time_s.append(float(r[0]))
+        rssi.append(float(r[1]))
+    return np.array(time_s), np.array(rssi)
+
+# ---------------------------------------------------------
+# Step 2: Metrics Quantifying Multipath
+# ---------------------------------------------------------
+def roughness(r):
+    # Mean absolute step-to-step change: smooth traces -> small, multipath traces -> large
+    valid = r[~np.isnan(r)]
+    return float(np.mean(np.abs(np.diff(valid))))
+
+def fade_depth(r):
+    # Peak-to-null swing, dB
+    valid = r[~np.isnan(r)]
+    return float(valid.max() - valid.min())
+
+def reversals(r):
+    # % of steps where RSSI got STRONGER while moving further away
+    valid = r[~np.isnan(r)]
+    d = np.diff(valid)
+    return 100.0 * float(np.sum(d > 0)) / d.size
+
+# ---------------------------------------------------------
+# Step 3: Two-Ray Theoretical Pattern
+# ---------------------------------------------------------
+def two_ray_pattern(pos_cm, start_extra_cm=0.0):
+    lam_cm = WAVELENGTH_M * 100.0  # 12.5 cm at 2.4 GHz
+    extra = start_extra_cm + 2.0 * pos_cm  # extra path grows as you move
+    phase = 2 * np.pi * extra / lam_cm  # phase difference
+    amp = np.abs(1.0 + np.exp(1j * phase))  # 0 (null) .. 2 (peak)
+    return 20.0 * np.log10(np.clip(amp / 2.0, 1e-3, 1.0))  # dB relative to the peak
+
+# ---------------------------------------------------------
+# Step 4: Text Report
+# ---------------------------------------------------------
+def print_report(pos, indoor, outdoor, time_s, stat_rssi):
+    r_ind = roughness(indoor)
+    r_out = roughness(outdoor)
+    f_ind = fade_depth(indoor)
+    f_out = fade_depth(outdoor)
+    rev_ind = reversals(indoor)
+    rev_out = reversals(outdoor)
+
+    print("=== Multipath fading survey ===")
+    print("Wavelength at 2.4 GHz = 12.5 cm -> peaks/nulls repeat about every 6.2cm\n")
+    print(f"{'Trace':<10} | {'Mean (dBm)':<11} | {'Spread(dB)':<11} | {'Roughness (dB)':<15} | {'FadeDepth(dB)':<14} | {'Reversals'}")
+    print("-" * 75)
+    print(f"{'Indoor':<10} | {np.mean(indoor):<11.1f} | {np.std(indoor):<11.1f} | {r_ind:<15.1f} | {f_ind:<14.1f} | {rev_ind:.0f}%")
+    print(f"{'Outdoor':<10} | {np.nanmean(outdoor):<11.1f} | {np.nanstd(outdoor):<11.1f} | {r_out:<15.1f} | {f_out:<14.1f} | {rev_out:.0f}%")
+    
+    stat_mean = np.mean(stat_rssi)
+    stat_spread = stat_rssi.max() - stat_rssi.min()
+    print(f"\nStanding still: mean {stat_mean:.1f} dBm, but the reading still varied by {stat_spread:.0f} dB")
+    print("without moving at all (people/doors changing the reflections).\n")
+    
+    ratio = r_ind / r_out if r_out > 0 else 0
+    print("HEADLINE: the indoor trace is {:.1f}x rougher than outdoors ({:.1f} vs {:.1f} dB per step),".format(ratio, r_ind, r_out))
+    print(f"with a {f_ind:.0f} dB peak-to-null swing over just {int(pos[-1]-pos[0])} cm, and RSSI got STRONGER on")
+    print(f"{rev_ind:.0f}% of steps taken AWAY from the transmitter -- impossible under distance")
+    print("loss alone. That is multipath fading.\n")
+
+# ---------------------------------------------------------
+# Step 5: Plotting Functions
+# ---------------------------------------------------------
+def plot_scan(pos, indoor, outdoor):
+    plt.figure(figsize=(8, 4.5))
+    plt.plot(pos, indoor, 'o-', color='#3b3b3b', label='Indoor (many reflectors)')
+    plt.plot(pos, outdoor, 's--', color='#7a7a7a', label='Outdoor (few reflectors)')
+    plt.title('Multipath fading: RSSI vs position, indoor vs outdoor')
+    plt.xlabel('Position along the scan (cm)')
+    plt.ylabel('RSSI (dBm)')
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+
+def plot_stationary(time_s, rssi):
+    plt.figure(figsize=(8, 4.5))
+    plt.plot(time_s, rssi, 'o-', color='#5c5c5c')
+    mean_val = np.mean(rssi)
+    plt.axhline(mean_val, color='gray', linestyle=':', alpha=0.7)
+    spread = rssi.max() - rssi.min()
+    plt.title(f'Standing perfectly still: RSSI still varies by {spread:.0f} dB')
+    plt.text(time_s[-1], rssi.max(), f'mean: {mean_val:.1f} dBm', ha='right', va='top')
+    plt.xlabel('Time (s)')
+    plt.ylabel('RSSI (dBm)')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+
+def plot_roughness(indoor, outdoor):
+    labels = ['Indoor', 'Outdoor']
+    rough = [roughness(indoor), roughness(outdoor)]
+    fade = [fade_depth(indoor), fade_depth(outdoor)]
+
+    x = np.arange(len(labels))
+    width = 0.35
+
+    plt.figure(figsize=(7, 4.5))
+    plt.bar(x - width/2, rough, width, label='Roughness (mean |step|, dB)', color='#5a5a5a')
+    plt.bar(x + width/2, fade, width, label='Fade depth (peak to null, dB)', color='#c7b299')
+
+    for i in range(len(labels)):
+        plt.text(x[i] - width/2, rough[i] + 0.2, f'{rough[i]:.1f}', ha='center')
+        plt.text(x[i] + width/2, fade[i] + 0.2, f'{fade[i]:.1f}', ha='center')
+
+    plt.title('Indoor vs outdoor: how jagged is the signal?')
+    plt.ylabel('dB')
+    plt.xticks(x, labels)
+    plt.legend()
+    plt.grid(axis='y', linestyle=':', alpha=0.6)
+    plt.tight_layout()
+
+def plot_two_ray():
+    pos = np.linspace(0, 50, 500)
+    sig_db = two_ray_pattern(pos)
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(pos, sig_db, color='#5c5c5c')
+    plt.title('Two-ray theory: peaks and nulls repeat every ~6.2 cm (half a wavelength)')
+    plt.xlabel('Receiver position (cm)')
+    plt.ylabel('Combined signal (dB relative to peak)')
+    plt.ylim(-30, 2)
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+
+def show_figures():
+    plt.show()
+
+# ---------------------------------------------------------
+# Main Execution
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    # Load or generate sample CSVs
+    pos, indoor, outdoor = load_scan()
+    time_s, stat_rssi = load_stationary()
+
+    # Print comparison report
+    print_report(pos, indoor, outdoor, time_s, stat_rssi)
+
+    # Render expected figures
+    plot_scan(pos, indoor, outdoor)
+    plot_stationary(time_s, stat_rssi)
+    plot_roughness(indoor, outdoor)
+    plot_two_ray()
+
+    show_figures()
+
+exp 10: Analysis of handover behaviour while moving (field observation)
+
+import csv
+import os
+from collections import OrderedDict
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+
+# A typical network setting. A handover is normally only allowed when the
+# neighbour beats the serving cell by this margin (and keeps beating it for
+# a short "time to trigger"). Both exist purely to stop ping-ponging.
+HYSTERESIS_DB = 3.0
+PING_PONG_WINDOW_S = 20.0  # returning to a cell within this = ping-pong
+
+SAMPLE_CSV = """Time_s,ServingCellID,ServingRSRP_dBm,NeighborCellID,NeighborRSRP_dBm
+0,12345,-72,67890,-101
+5,12345,-76,67890,-97
+10,12345,-81,67890,-92
+15,12345,-85,67890,-88
+20,12345,-89,67890,-84
+25,67890,-83,12345,-91
+30,67890,-86,12345,-88
+35,12345,-87,67890,-89
+40,67890,-85,12345,-90
+45,67890,-80,12345,-95
+50,67890,-78,54321,-99
+55,67890,-83,54321,-90
+60,67890,-88,54321,-85
+65,54321,-82,67890,-92
+70,54321,-77,67890,-97
+"""
+
+# ==============================================================================
+# STEP 1 Data input
+# ==============================================================================
+def load_log(fname="handover_log.csv"):
+    """Read the drive/walk log; create a sample file on the first run."""
+    if not os.path.exists(fname):
+        with open(fname, "w") as f:
+            f.write(SAMPLE_CSV)
+        print(f"[i] No {fname} found — a SAMPLE file was created representing")
+        print("    a short walked route. Replace it with your own exported log,")
+        print("    then rerun.")
+
+    rows = []
+    with open(fname) as f:
+        for r in csv.reader(f):
+            if not r or r[0].strip().startswith("Time"):
+                continue  # skip header / blank lines
+            rows.append({
+                "t": float(r[0]),
+                "cell": r[1].strip(),
+                "rsrp": float(r[2]),
+                "ncell": r[3].strip() if len(r) > 3 and r[3].strip() else "",
+                "nrsrp": float(r[4]) if len(r) > 4 and r[4].strip() else np.nan,
+            })
+    return sorted(rows, key=lambda r: r["t"])
+
+
+# ==============================================================================
+# STEP 2 Find the handovers
+# ==============================================================================
+def detect_handovers(rows):
+    """
+    A handover is simply a change of serving Cell ID between two consecutive
+    samples. For each one we also record the TRIGGER MARGIN measured in the
+    sample immediately before the switch:
+        margin = (neighbour RSRP) - (serving RSRP)
+    That is how much better the target cell looked at the moment the network
+    decided to move you. A healthy handover shows a clearly positive margin.
+    """
+    events = []
+    for prev, cur in zip(rows, rows[1:]):
+        if prev["cell"] == cur["cell"]:
+            continue  # still on the same tower
+
+        # was the cell we moved to the neighbour being reported before?
+        margin = np.nan
+        if prev["ncell"] == cur["cell"] and not np.isnan(prev["nrsrp"]):
+            margin = prev["nrsrp"] - prev["rsrp"]
+
+        events.append({
+            "t": cur["t"],
+            "from": prev["cell"],
+            "to": cur["cell"],
+            "rsrp_before": prev["rsrp"],
+            "rsrp_after": cur["rsrp"],
+            "margin": margin,
+        })
+    return events
+
+
+def classify_handover(margin):
+    """Judge a handover by the margin that triggered it."""
+    if np.isnan(margin):
+        return "unknown (no neighbour data)"
+    if margin >= HYSTERESIS_DB:
+        return "healthy"
+    if margin > 0:
+        return "weak margin"
+    return "unjustified (target no better)"
+
+
+# ==============================================================================
+# STEP 3 Ping-pong detection
+# ==============================================================================
+def detect_ping_pong(events, window=PING_PONG_WINDOW_S):
+    """
+    A ping-pong is handing back to a cell you have just left, within a short
+    window: A -> B then B -> A soon after. It wastes signalling, briefly
+    interrupts the data flow, and is exactly what hysteresis and
+    time-to-trigger are designed to prevent.
+    """
+    pings = []
+    for a, b in zip(events, events[1:]):
+        if b["to"] == a["from"] and (b["t"] - a["t"]) <= window:
+            pings.append({
+                "t1": a["t"],
+                "t2": b["t"],
+                "cellA": a["from"],
+                "cellB": a["to"],
+                "gap": b["t"] - a["t"]
+            })
+    return pings
+
+
+def hysteresis_sweep(events, margins=np.arange(0, 9, 1.0)):
+    """
+    'What if the network had used a bigger margin?'
+    For each candidate hysteresis value, count how many of the observed
+    handovers would NOT have been allowed (because their trigger margin was
+    too small). This shows how a larger margin suppresses marginal switches —
+    the ones that cause ping-ponging — at the cost of holding on to a weak
+    cell longer.
+    """
+    known = [e for e in events if not np.isnan(e["margin"])]
+    out = []
+    for m in margins:
+        blocked = sum(1 for e in known if e["margin"] < m)
+        out.append((float(m), blocked, len(known)))
+    return out
+
+
+# ==============================================================================
+# STEP 4 Stability: dwell time and handover rate
+# ==============================================================================
+def dwell_times(rows):
+    """How long each cell served you, in seconds (summed over visits)."""
+    dwell = OrderedDict()
+    for prev, cur in zip(rows, rows[1:]):
+        dwell[prev["cell"]] = dwell.get(prev["cell"], 0.0) + (cur["t"] - prev["t"])
+    return dwell
+
+
+def stability(rows, events):
+    duration = rows[-1]["t"] - rows[0]["t"] if len(rows) > 1 else 0.0
+    rate = (len(events) / duration * 60.0) if duration else 0.0
+    return duration, rate
+
+
+# ==============================================================================
+# STEP 5 Report
+# ==============================================================================
+def print_report(rows, events, pings):
+    duration, rate = stability(rows, events)
+    print("\n=== Handover analysis ===")
+    print(f" Route logged for {duration:.0f} s, {len(rows)} samples, "
+          f"{len(set(r['cell'] for r in rows))} distinct cells visited.")
+    print(f" {len(events)} handover(s) -> {rate:.1f} per minute.")
+
+    if events:
+        hdr = " Time(s) From    -> To      RSRP before/after Margin Verdict"
+        print("\n" + hdr)
+        print("-" * len(hdr))
+        for e in events:
+            margin_str = "  n/a" if np.isnan(e["margin"]) else f"{e['margin']:+5.0f}"
+            print(f" {e['t']:>6.0f}  {e['from']:<7} -> {e['to']:<7} "
+                  f"{e['rsrp_before']:>6.0f} / {e['rsrp_after']:<6.0f} "
+                  f"{margin_str} dB  {classify_handover(e['margin'])}")
+
+    print("\n Dwell time per cell:")
+    for cell, secs in dwell_times(rows).items():
+        print(f"  cell {cell:<8} {secs:>5.0f} s")
+
+    if pings:
+        print(f"\n PING-PONG detected ({len(pings)} episode(s)):")
+        for p in pings:
+            print(f"  {p['cellA']} -> {p['cellB']} at t={p['t1']:.0f} s, "
+                  f"back to {p['cellA']} at t={p['t2']:.0f} s (only {p['gap']:.0f} s later)")
+        print("  The phone bounced between towers whose signals were nearly equal.")
+        print("  This is precisely what a hysteresis margin and time-to-trigger")
+        print("  are designed to prevent.")
+    else:
+        print("\n No ping-ponging detected — handovers were stable.")
+
+    bad = [e for e in events if not np.isnan(e["margin"]) and e["margin"] < HYSTERESIS_DB]
+    if bad:
+        print(f"\nHEADLINE: {len(bad)} of {len(events)} handovers fired with a margin below the")
+        print(f"  {HYSTERESIS_DB:.0f} dB hysteresis threshold — the target cell was barely better, or")
+        print("  not better at all. Those marginal switches are what produce ping-ponging,")
+        print("  wasted signalling and the brief data stalls you may have felt on the route.")
+
+
+# ==============================================================================
+# STEP 6 Figures
+# ==============================================================================
+def plot_rsrp_timeline(rows, events, fname="handover_rsrp_timeline.png"):
+    """The centerpiece: serving vs neighbour RSRP with handovers marked."""
+    t = [r["t"] for r in rows]
+    serving = [r["rsrp"] for r in rows]
+    neighbour = [r["nrsrp"] for r in rows]
+
+    fig, ax = plt.subplots(figsize=(9.0, 5.4))
+    ax.plot(t, serving, "o-", color="tab:blue", lw=2.2, markersize=6, label="Serving cell RSRP")
+
+    if not all(np.isnan(neighbour)):
+        ax.plot(t, neighbour, "s--", color="tab:orange", lw=1.8, markersize=5, alpha=0.85, label="Best neighbour RSRP")
+
+    for e in events:
+        ax.axvline(e["t"], color="tab:red", ls=":", lw=1.5, alpha=0.8)
+        ax.annotate(f"{e['from']}->{e['to']}", (e["t"], max(serving) + 1),
+                    rotation=90, fontsize=7.5, color="firebrick", ha="right", va="top")
+
+    ax.set_xlabel("Time along the route (s)")
+    ax.set_ylabel("RSRP (dBm)")
+    ax.set_title("Handover events: the neighbour overtakes the serving cell")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="lower left", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+
+def plot_cell_timeline(rows, fname="handover_cell_timeline.png"):
+    """Which tower served you at each moment."""
+    cells = list(OrderedDict.fromkeys(r["cell"] for r in rows))
+    idx = {c: i for i, c in enumerate(cells)}
+
+    t = [r["t"] for r in rows]
+    y = [idx[r["cell"]] for r in rows]
+
+    fig, ax = plt.subplots(figsize=(9.0, 4.4))
+    ax.step(t, y, where="post", color="tab:purple", lw=2.5)
+    ax.scatter(t, y, s=28, color="tab:purple", zorder=3)
+    ax.set_yticks(range(len(cells)))
+    ax.set_yticklabels([f"cell {c}" for c in cells])
+    ax.set_ylim(-0.5, len(cells) - 0.5)
+    ax.set_xlabel("Time along the route (s)")
+    ax.set_title("Serving Cell ID over time (each step is a handover)")
+    ax.grid(alpha=0.3, axis="x")
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+
+def plot_margins(events, fname="handover_margins.png"):
+    """Trigger margin per handover, against the hysteresis threshold."""
+    known = [e for e in events if not np.isnan(e["margin"])]
+    if not known:
+        return None
+
+    labels = [f"{e['from']}->{e['to']}\n(t={e['t']:.0f}s)" for e in known]
+    margins = [e["margin"] for e in known]
+    cols = ["tab:green" if m >= HYSTERESIS_DB else "tab:orange" if m > 0 else "tab:red" for m in margins]
+
+    x = np.arange(len(known))
+    fig, ax = plt.subplots(figsize=(8.8, 5.2))
+    bars = ax.bar(x, margins, color=cols, edgecolor="black", lw=0.5)
+    ax.axhline(HYSTERESIS_DB, ls="--", color="tab:blue", label=f"hysteresis threshold {HYSTERESIS_DB:.0f} dB")
+    ax.axhline(0, color="black", lw=1)
+
+    for b, m in zip(bars, margins):
+        ax.text(b.get_x() + b.get_width() / 2,
+                m + (0.15 if m >= 0 else -0.45),
+                f"{m:+.0f}", ha="center",
+                va="bottom" if m >= 0 else "top",
+                fontsize=9, fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("Trigger margin (dB)\nneighbour - serving")
+    ax.set_title("Was each handover justified? Margin at the moment of switching")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+
+def plot_hysteresis_sweep(events, fname="hysteresis_sweep.png"):
+    """How many marginal handovers a larger hysteresis would have blocked."""
+    sweep = hysteresis_sweep(events)
+    if not sweep or sweep[0][2] == 0:
+        return None
+
+    m = [s[0] for s in sweep]
+    blocked = [s[1] for s in sweep]
+    total = sweep[0][2]
+
+    fig, ax = plt.subplots(figsize=(8.8, 5.0))
+    ax.plot(m, blocked, "o-", color="tab:blue", lw=2.2, markersize=7)
+    ax.axvline(HYSTERESIS_DB, ls="--", color="tab:red", label=f"typical setting {HYSTERESIS_DB:.0f} dB")
+    ax.set_xlabel("Hysteresis margin required before handover (dB)")
+    ax.set_ylabel(f"Handovers suppressed (of {total})")
+    ax.set_title("Bigger hysteresis suppresses marginal handovers - and ping-ponging")
+    ax.set_yticks(range(0, total + 1))
+    ax.grid(alpha=0.3)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(fname, dpi=150)
+    return fig
+
+
+def show_figures():
+    """Display helper avoids the 'FigureCanvasAgg is non-interactive' warning."""
+    file_only = ("agg", "pdf", "ps", "svg", "cairo", "template")
+    if matplotlib.get_backend().lower() not in file_only:
+        plt.show()
+    else:
+        print("[i] Non-interactive backend (" + matplotlib.get_backend() +
+              "): figures were saved to PNG instead of being shown.")
+
+
+# ==============================================================================
+# MAIN
+# ==============================================================================
+if __name__ == "__main__":
+    rows = load_log()
+    events = detect_handovers(rows)
+    pings = detect_ping_pong(events)
+    print_report(rows, events, pings)
+
+    plot_rsrp_timeline(rows, events)
+    plot_cell_timeline(rows)
+
+    saved = "handover_rsrp_timeline.png, handover_cell_timeline.png"
+    if plot_margins(events) is not None:
+        saved += ", handover_margins.png"
+    if plot_hysteresis_sweep(events) is not None:
+        saved += ", hysteresis_sweep.png"
+
+    print(f"\nSaved: {saved}")
+    show_figures()
+

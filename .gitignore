@@ -1,0 +1,28 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.ipynb_checkpoints
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Word documents and PDFs
+*.docx
+*.pdf
+
+# Raw data and image assets
+*.png
+*.csv
+
+# Other scripts & notebooks in working directory
+*.py
+*.ipynb
+ppt/
+
+# OS artifacts
+Thumbs.db
+desktop.ini
+.DS_Store
